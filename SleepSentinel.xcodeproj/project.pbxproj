@@ -10,9 +10,22 @@
 		91B5655A2E9772E30007302E /* SleepSentinel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SleepSentinel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		91B565962E9777F20007302E /* Exceptions for "SleepSentinel" folder in "SleepSentinel" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 91B565592E9772E30007302E /* SleepSentinel */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		91B5655C2E9772E30007302E /* SleepSentinel */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				91B565962E9777F20007302E /* Exceptions for "SleepSentinel" folder in "SleepSentinel" target */,
+			);
 			path = SleepSentinel;
 			sourceTree = "<group>";
 		};

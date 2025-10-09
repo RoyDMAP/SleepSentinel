@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+// Main entry point - this is where the app starts
 @main
 struct SleepSentinelApp: App {
     var body: some Scene {
