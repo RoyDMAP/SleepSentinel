@@ -9,17 +9,17 @@ import SwiftUI
 
 // Main starting point - decides what screen to show
 struct ContentView: View {
-    @StateObject private var vm = SleepVM()
+    @EnvironmentObject var vm: SleepVM
     
     var body: some View {
         Group {
             // First time? Show welcome screens
             if !vm.settings.hasCompletedOnboarding {
-                OnboardingView(vm: vm)
+                OnboardingView()
             }
             // Already set up? Show main app
             else {
-                MainTabView(vm: vm)
+                MainTabView()
             }
         }
         // Show error messages if something goes wrong
@@ -36,4 +36,5 @@ struct ContentView: View {
 // Preview for Xcode
 #Preview {
     ContentView()
+        .environmentObject(SleepVM())
 }

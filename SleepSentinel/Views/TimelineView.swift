@@ -9,7 +9,7 @@ import SwiftUI
 
 // Timeline screen - shows sleep as visual bars (like a calendar)
 struct TimelineView: View {
-    @ObservedObject var vm: SleepVM
+    @EnvironmentObject var vm: SleepVM
     
     var body: some View {
         NavigationStack {
@@ -112,5 +112,6 @@ struct TimelineView: View {
 
 // Preview for Xcode
 #Preview {
-    TimelineView(vm: SleepVM())
+    TimelineView()  // ← No vm parameter
+        .environmentObject(SleepVM())
 }

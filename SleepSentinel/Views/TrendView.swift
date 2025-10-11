@@ -10,7 +10,7 @@ import Charts
 
 // Trends screen - shows charts of your sleep patterns
 struct TrendsView: View {
-    @ObservedObject var vm: SleepVM
+    @EnvironmentObject var vm: SleepVM
     
     var body: some View {
         NavigationStack {
@@ -93,6 +93,8 @@ struct TrendsView: View {
 }
 
 // Preview for Xcode
+// CORRECT:
 #Preview {
-    TrendsView(vm: SleepVM())
+    TrendsView()
+        .environmentObject(SleepVM())
 }

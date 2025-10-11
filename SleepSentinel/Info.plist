@@ -6,15 +6,14 @@
     <key>CFBundleDisplayName</key>
     <string>SleepSentinel</string>
     
-    <!-- HealthKit Permission - Required for reading sleep data -->
+    <!-- HealthKit Permissions -->
     <key>NSHealthShareUsageDescription</key>
     <string>SleepSentinel needs access to your sleep data to provide insights and track your sleep patterns.</string>
-    
-    <!-- HealthKit Permission - Required if writing sleep data (optional) -->
+
     <key>NSHealthUpdateUsageDescription</key>
-    <string>This allows the app to save sleep data to HealthKit.</string>
+    <string>SleepSentinel needs permission to save sleep data to HealthKit so it can record your sleep sessions and provide personalized insights.</string>
     
-    <!-- Launch Screen (empty for default) -->
+    <!-- Launch Screen (optional) -->
     <key>UILaunchScreen</key>
     <dict/>
     
@@ -36,3 +35,4 @@
     </array>
 </dict>
 </plist>
+

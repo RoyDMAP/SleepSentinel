@@ -1,46 +1,51 @@
-//
-//  MainTabView.swift
-//  SleepSentinel
-//
-//  Created by Roy Dimapilis on 10/8/25.
-//
-
 import SwiftUI
 
 // Bottom tab bar with 4 screens
 struct MainTabView: View {
-    @ObservedObject var vm: SleepVM
+    @EnvironmentObject var vm: SleepVM
+    @State private var selectedTab = 0
     
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             // Tab 1: Dashboard (main screen)
-            DashboardView(vm: vm)
+            DashboardView()
                 .tabItem {
                     Label("Dashboard", systemImage: "chart.bar.fill")
                 }
+                .tag(0)
             
             // Tab 2: Trends (charts)
-            TrendsView(vm: vm)
+            TrendsView()
                 .tabItem {
                     Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                 }
+                .tag(1)
             
             // Tab 3: Timeline (visual bars)
-            TimelineView(vm: vm)
+            TimelineView()
                 .tabItem {
                     Label("Timeline", systemImage: "calendar")
                 }
+                .tag(2)
             
             // Tab 4: Settings
-            SettingsView(vm: vm)
+            SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
+                .tag(3)
+        }
+        .onAppear {
+            // Request HealthKit authorization if not already done
+            if !vm.hkAuthorized {
+                vm.requestHKAuth()
+            }
         }
     }
 }
 
 // Preview for Xcode
 #Preview {
-    MainTabView(vm: SleepVM())
+    MainTabView()
+        .environmentObject(SleepVM())
 }

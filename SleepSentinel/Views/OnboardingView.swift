@@ -9,7 +9,7 @@ import SwiftUI
 
 // First-time welcome screens (swipe through 3 pages)
 struct OnboardingView: View {
-    @ObservedObject var vm: SleepVM
+    @EnvironmentObject var vm: SleepVM
     @State private var currentPage = 0
     
     var body: some View {
@@ -144,5 +144,6 @@ struct OnboardingView: View {
 
 // Preview for Xcode
 #Preview {
-    OnboardingView(vm: SleepVM())
+    OnboardingView()  // ← No vm parameter
+        .environmentObject(SleepVM())
 }

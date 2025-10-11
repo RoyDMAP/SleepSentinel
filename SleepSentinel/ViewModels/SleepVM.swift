@@ -1,10 +1,3 @@
-//
-//  SleepVM.swift
-//  SleepSentinel
-//
-//  Created by Roy Dimapilis on 10/8/25.
-//
-
 import SwiftUI
 import HealthKit
 import UserNotifications
@@ -28,6 +21,13 @@ final class SleepVM: ObservableObject {
     init() {
         loadData()
         setupDayChangeObserver()
+        
+        // Fetch fresh data on app launch if authorized
+        Task {
+            if hkAuthorized {
+                await runAnchoredFetch()
+            }
+        }
     }
     
     // MARK: - Save & Load Data
@@ -43,12 +43,14 @@ final class SleepVM: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "nights"),
            let decoded = try? JSONDecoder().decode([SleepNight].self, from: data) {
             nights = decoded.sorted { $0.date > $1.date }
+            print("📱 Loaded \(nights.count) nights from cache")
         }
         
         // Load HealthKit anchor
         if let data = UserDefaults.standard.data(forKey: "anchor"),
            let decoded = try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data) {
             anchor = decoded
+            print("⚓ Loaded HealthKit anchor")
         }
     }
     
@@ -61,6 +63,7 @@ final class SleepVM: ObservableObject {
     private func saveNights() {
         if let encoded = try? JSONEncoder().encode(nights) {
             UserDefaults.standard.set(encoded, forKey: "nights")
+            print("💾 Saved \(nights.count) nights to cache")
         }
     }
     
@@ -69,26 +72,40 @@ final class SleepVM: ObservableObject {
         if let encoded = try? NSKeyedArchiver.archivedData(withRootObject: newAnchor, requiringSecureCoding: true) {
             UserDefaults.standard.set(encoded, forKey: "anchor")
             anchor = newAnchor
+            print("⚓ Saved HealthKit anchor")
         }
     }
     
     // MARK: - HealthKit Permission
     
-    func requestHKAuth() async {
+    func requestHKAuth() {
         guard HKHealthStore.isHealthDataAvailable() else {
             errorMessage = "HealthKit not available"
             return
         }
         
-        let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            errorMessage = "Sleep Analysis type unavailable"
+            return
+        }
         
-        do {
-            try await healthStore.requestAuthorization(toShare: [], read: [sleepType])
-            hkAuthorized = true
-            startObservers()
-            await runAnchoredFetch()
-        } catch {
-            errorMessage = error.localizedDescription
+        let readTypes: Set<HKObjectType> = [sleepType]
+        let writeTypes: Set<HKSampleType> = [sleepType]
+        
+        healthStore.requestAuthorization(toShare: writeTypes, read: readTypes) { [weak self] success, error in
+            Task { @MainActor in
+                guard let self = self else { return }
+                
+                if success {
+                    print("✅ HealthKit authorization granted")
+                    self.hkAuthorized = true
+                    self.startObservers()
+                    await self.runAnchoredFetch()
+                } else {
+                    print("❌ HealthKit authorization failed: \(error?.localizedDescription ?? "Unknown error")")
+                    self.errorMessage = error?.localizedDescription ?? "Authorization failed"
+                }
+            }
         }
     }
     
@@ -106,6 +123,14 @@ final class SleepVM: ObservableObject {
         
         if let query = observerQuery {
             healthStore.execute(query)
+            // Enable background delivery
+            healthStore.enableBackgroundDelivery(for: sleepType, frequency: .immediate) { success, error in
+                if success {
+                    print("✅ Background delivery enabled")
+                } else {
+                    print("❌ Background delivery failed: \(error?.localizedDescription ?? "Unknown")")
+                }
+            }
         }
     }
     
@@ -116,8 +141,11 @@ final class SleepVM: ObservableObject {
         
         let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -90, to: endDate)!
+        // Fetch last 180 days (6 months) of data
+        let startDate = Calendar.current.date(byAdding: .day, value: -180, to: endDate)!
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
+        
+        print("🔄 Fetching sleep data from \(startDate) to \(endDate)")
         
         await withCheckedContinuation { continuation in
             let query = HKAnchoredObjectQuery(
@@ -132,7 +160,11 @@ final class SleepVM: ObservableObject {
                         return
                     }
                     
-                    if let samples = samples as? [HKCategorySample] {
+                    if let error = error {
+                        print("❌ Error fetching sleep data: \(error.localizedDescription)")
+                        self.errorMessage = error.localizedDescription
+                    } else if let samples = samples as? [HKCategorySample] {
+                        print("✅ Fetched \(samples.count) sleep samples")
                         self.processSamples(samples)
                     }
                     
@@ -145,9 +177,62 @@ final class SleepVM: ObservableObject {
         }
     }
     
+    // Force a complete resync from HealthKit
+    func forceFullResync() {
+        print("🔄 Forcing full resync - clearing anchor and cache...")
+        
+        // Clear the anchor to fetch everything again
+        anchor = nil
+        UserDefaults.standard.removeObject(forKey: "anchor")
+        
+        // Clear existing nights
+        nights = []
+        
+        // Fetch all data fresh from HealthKit
+        Task {
+            await runAnchoredFetch()
+        }
+    }
+    
+    // Debug: Check what's in HealthKit
+    func debugHealthKitData() {
+        let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        
+        let query = HKSampleQuery(sampleType: sleepType, predicate: nil, limit: 20, sortDescriptors: [sortDescriptor]) { query, results, error in
+            if let samples = results as? [HKCategorySample] {
+                print("🔍 DEBUG: Found \(samples.count) most recent sleep samples in HealthKit:")
+                for (index, sample) in samples.enumerated() {
+                    let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
+                    let type = self.sleepTypeString(value)
+                    print("  \(index + 1). [\(type)] Start: \(sample.startDate), End: \(sample.endDate)")
+                }
+            } else {
+                print("❌ DEBUG: No samples found or error: \(error?.localizedDescription ?? "unknown")")
+            }
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    private func sleepTypeString(_ value: HKCategoryValueSleepAnalysis?) -> String {
+        guard let value = value else { return "Unknown" }
+        switch value {
+        case .inBed: return "In Bed"
+        case .asleepUnspecified: return "Asleep"
+        case .asleepCore: return "Core Sleep"
+        case .asleepDeep: return "Deep Sleep"
+        case .asleepREM: return "REM Sleep"
+        case .awake: return "Awake"
+        @unknown default: return "Unknown"
+        }
+    }
+    
     // MARK: - Turn HealthKit Data into Nights
     
     private func processSamples(_ samples: [HKCategorySample]) {
+        print("🔍 Processing \(samples.count) samples...")
+        
         var nightsDict: [Date: [HKCategorySample]] = [:]
         
         // Group samples by night
@@ -155,6 +240,8 @@ final class SleepVM: ObservableObject {
             let nightDate = getNightAnchor(for: sample.startDate)
             nightsDict[nightDate, default: []].append(sample)
         }
+        
+        print("📅 Found \(nightsDict.keys.count) unique nights")
         
         var newNights: [SleepNight] = []
         
@@ -168,15 +255,17 @@ final class SleepVM: ObservableObject {
             for sample in samples.sorted(by: { $0.startDate < $1.startDate }) {
                 let duration = sample.endDate.timeIntervalSince(sample.startDate)
                 
+                // Update bedtime and wake time
+                if bedtime == nil || sample.startDate < bedtime! {
+                    bedtime = sample.startDate
+                }
+                if wake == nil || sample.endDate > wake! {
+                    wake = sample.endDate
+                }
+                
                 // Time in bed
                 if sample.value == HKCategoryValueSleepAnalysis.inBed.rawValue {
                     inBedTotal += duration
-                    if bedtime == nil || sample.startDate < bedtime! {
-                        bedtime = sample.startDate
-                    }
-                    if wake == nil || sample.endDate > wake! {
-                        wake = sample.endDate
-                    }
                 }
                 // Time asleep (all sleep stages)
                 else if sample.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue ||
@@ -184,6 +273,7 @@ final class SleepVM: ObservableObject {
                         sample.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
                         sample.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue {
                     asleepTotal += duration
+                    inBedTotal += duration  // Sleep time counts as in-bed time
                 }
             }
             
@@ -207,6 +297,8 @@ final class SleepVM: ObservableObject {
             ))
         }
         
+        print("📊 Created \(newNights.count) new nights")
+        
         // Merge with existing nights
         var existingDict = Dictionary(uniqueKeysWithValues: nights.map { ($0.date, $0) })
         for night in newNights {
@@ -214,6 +306,14 @@ final class SleepVM: ObservableObject {
         }
         
         nights = Array(existingDict.values).sorted { $0.date > $1.date }
+        
+        print("💾 Total nights after merge: \(nights.count)")
+        if let oldest = nights.last?.date, let newest = nights.first?.date {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            print("📅 Date range: \(formatter.string(from: oldest)) to \(formatter.string(from: newest))")
+        }
+        
         saveNights()
     }
     
@@ -309,6 +409,22 @@ final class SleepVM: ObservableObject {
         return bedtimeDate.timeIntervalSince1970 + (wakeDate.timeIntervalSince(bedtimeDate) / 2)
     }
     
+    // Check if a specific night is on schedule
+    func isOnSchedule(_ night: SleepNight) -> Bool {
+        guard let midpoint = night.midpoint else { return false }
+        let targetMidpoint = getTargetMidpoint()
+        let tolerance = TimeInterval(settings.midpointToleranceMinutes * 60)
+        return abs(midpoint.timeIntervalSince1970 - targetMidpoint) <= tolerance
+    }
+    
+    // Get deviation from target in minutes
+    func getMidpointDeviation(_ night: SleepNight) -> Int? {
+        guard let midpoint = night.midpoint else { return nil }
+        let targetMidpoint = getTargetMidpoint()
+        let differenceInMinutes = (midpoint.timeIntervalSince1970 - targetMidpoint) / 60
+        return Int(differenceInMinutes)
+    }
+    
     // MARK: - Settings & Notifications
     
     func updateSettings(_ newSettings: SleepSettings) {
@@ -329,11 +445,17 @@ final class SleepVM: ObservableObject {
     
     func requestNotificationPermission() async {
         do {
-            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             if granted {
-                scheduleReminders()
+                print("✅ Notification permission granted")
+                if settings.remindersEnabled {
+                    scheduleReminders()
+                }
+            } else {
+                print("⚠️ Notification permission denied")
             }
         } catch {
+            print("❌ Error requesting notification permission: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -350,30 +472,42 @@ final class SleepVM: ObservableObject {
         
         var dateComponents = DateComponents()
         dateComponents.hour = hour
-        dateComponents.minute = max(0, minute - 10)  // 10 minutes before bedtime
+        dateComponents.minute = max(0, minute - 30)  // 30 minutes before bedtime
         
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
         let request = UNNotificationRequest(identifier: "bedtimeReminder", content: content, trigger: trigger)
         
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("❌ Error scheduling notification: \(error.localizedDescription)")
+            } else {
+                print("✅ Bedtime reminder scheduled for \(hour):\(minute - 30)")
+            }
+        }
     }
     
     // MARK: - Export Data
     
     func exportCSV() -> String {
-        var csv = "Date,Time in Bed (hours),Time Asleep (hours),Efficiency (%),Bedtime,Wake Time,Midpoint\n"
+        var csv = "Date,Time in Bed (hours),Time Asleep (hours),Efficiency (%),Bedtime,Wake Time,Midpoint,On Schedule\n"
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
         
         for night in nights.sorted(by: { $0.date < $1.date }) {
-            let formatter = ISO8601DateFormatter()
-            let dateStr = formatter.string(from: night.date)
+            let dateStr = dateFormatter.string(from: night.date)
             let inBedStr = night.inBed != nil ? String(format: "%.2f", night.inBed! / 3600.0) : "n/a"
             let asleepStr = night.asleep != nil ? String(format: "%.2f", night.asleep! / 3600.0) : "n/a"
             let efficiencyStr = night.efficiency != nil ? String(format: "%.1f", night.efficiency!) : "n/a"
-            let bedtimeStr = night.bedtime != nil ? formatter.string(from: night.bedtime!) : "n/a"
-            let wakeStr = night.wake != nil ? formatter.string(from: night.wake!) : "n/a"
-            let midpointStr = night.midpoint != nil ? formatter.string(from: night.midpoint!) : "n/a"
+            let bedtimeStr = night.bedtime != nil ? timeFormatter.string(from: night.bedtime!) : "n/a"
+            let wakeStr = night.wake != nil ? timeFormatter.string(from: night.wake!) : "n/a"
+            let midpointStr = night.midpoint != nil ? timeFormatter.string(from: night.midpoint!) : "n/a"
+            let onScheduleStr = isOnSchedule(night) ? "Yes" : "No"
             
-            csv += "\(dateStr),\(inBedStr),\(asleepStr),\(efficiencyStr),\(bedtimeStr),\(wakeStr),\(midpointStr)\n"
+            csv += "\(dateStr),\(inBedStr),\(asleepStr),\(efficiencyStr),\(bedtimeStr),\(wakeStr),\(midpointStr),\(onScheduleStr)\n"
         }
         
         return csv
@@ -384,5 +518,13 @@ final class SleepVM: ObservableObject {
         saveNights()
         anchor = nil
         UserDefaults.standard.removeObject(forKey: "anchor")
+        lastUpdate = nil
+        print("🗑️ Cleared all cached data")
+    }
+    
+    deinit {
+        if let query = observerQuery {
+            healthStore.stop(query)
+        }
     }
 }

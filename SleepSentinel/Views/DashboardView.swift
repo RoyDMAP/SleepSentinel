@@ -9,7 +9,7 @@ import SwiftUI
 
 // Main dashboard - shows your sleep summary
 struct DashboardView: View {
-    @ObservedObject var vm: SleepVM
+    @EnvironmentObject var vm: SleepVM
     
     var body: some View {
         NavigationStack {
@@ -218,5 +218,8 @@ struct DashboardView: View {
 
 // Preview for Xcode
 #Preview {
-    DashboardView(vm: SleepVM())
+    NavigationStack {
+        DashboardView()
+            .environmentObject(SleepVM())
+    }
 }
