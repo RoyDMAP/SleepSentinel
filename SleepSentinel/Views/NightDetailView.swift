@@ -54,7 +54,7 @@ struct NightDetailView: View {
                     Text("Sleep Metrics")
                         .font(.headline)
                     
-                    if let asleep = night.asleep {
+                    if night.asleep != nil{
                         metricRow(title: "Time Asleep", value: night.sleepFormatted, icon: "moon.fill")
                     }
                     

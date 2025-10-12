@@ -16,7 +16,7 @@ struct SettingsView: View {
                 Section {
                     // Pick your bedtime
                     DatePicker("Target Bedtime", selection: $targetBedtimeDate, displayedComponents: .hourAndMinute)
-                        .onChange(of: targetBedtimeDate) { newValue in
+                        .onChange(of: targetBedtimeDate) { oldValue, newValue in
                             let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
                             var newSettings = vm.settings
                             newSettings.targetBedtime = components
@@ -25,7 +25,7 @@ struct SettingsView: View {
                     
                     // Pick your wake time
                     DatePicker("Target Wake Time", selection: $targetWakeDate, displayedComponents: .hourAndMinute)
-                        .onChange(of: targetWakeDate) { newValue in
+                        .onChange(of: targetWakeDate) { oldValue, newValue in
                             let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
                             var newSettings = vm.settings
                             newSettings.targetWake = components

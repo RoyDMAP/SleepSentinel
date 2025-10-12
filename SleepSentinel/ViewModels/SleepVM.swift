@@ -208,11 +208,13 @@ final class SleepVM: ObservableObject {
         
         let query = HKSampleQuery(sampleType: sleepType, predicate: nil, limit: 20, sortDescriptors: [sortDescriptor]) { query, results, error in
             if let samples = results as? [HKCategorySample] {
-                print("🔍 DEBUG: Found \(samples.count) most recent sleep samples in HealthKit:")
-                for (index, sample) in samples.enumerated() {
-                    let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
-                    let type = self.sleepTypeString(value)
-                    print("  \(index + 1). [\(type)] Start: \(sample.startDate), End: \(sample.endDate)")
+                Task { @MainActor in
+                    print("🔍 DEBUG: Found \(samples.count) most recent sleep samples in HealthKit:")
+                    for (index, sample) in samples.enumerated() {
+                        let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
+                        let type = self.sleepTypeString(value)
+                        print("  \(index + 1). [\(type)] Start: \(sample.startDate), End: \(sample.endDate)")
+                    }
                 }
             } else {
                 print("❌ DEBUG: No samples found or error: \(error?.localizedDescription ?? "unknown")")
@@ -406,14 +408,31 @@ final class SleepVM: ObservableObject {
     
     private func getTargetMidpoint() -> TimeInterval {
         let calendar = Calendar.current
-        let bedtimeDate = calendar.date(from: settings.targetBedtime) ?? Date()
-        var wakeDate = calendar.date(from: settings.targetWake) ?? Date()
         
-        if wakeDate < bedtimeDate {
+        // Get current date to anchor the calculation
+        let now = Date()
+        let todayStart = calendar.startOfDay(for: now)
+        
+        // Create bedtime and wake time for today
+        guard let bedHour = settings.targetBedtime.hour,
+              let bedMinute = settings.targetBedtime.minute,
+              let wakeHour = settings.targetWake.hour,
+              let wakeMinute = settings.targetWake.minute else {
+            return 0
+        }
+        
+        var bedtimeDate = calendar.date(bySettingHour: bedHour, minute: bedMinute, second: 0, of: todayStart)!
+        var wakeDate = calendar.date(bySettingHour: wakeHour, minute: wakeMinute, second: 0, of: todayStart)!
+        
+        // If wake time is earlier than bedtime (crosses midnight), add a day to wake time
+        if wakeDate <= bedtimeDate {
             wakeDate = calendar.date(byAdding: .day, value: 1, to: wakeDate)!
         }
         
-        return bedtimeDate.timeIntervalSince1970 + (wakeDate.timeIntervalSince(bedtimeDate) / 2)
+        // Calculate midpoint
+        let midpoint = bedtimeDate.timeIntervalSince1970 + (wakeDate.timeIntervalSince(bedtimeDate) / 2)
+        
+        return midpoint
     }
     
     // Check if a specific night is on schedule

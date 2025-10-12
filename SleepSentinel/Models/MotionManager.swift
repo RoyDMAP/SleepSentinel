@@ -132,9 +132,7 @@ class MotionManager: ObservableObject {
         
         print("🔍 Querying historical motion from \(startDate) to \(endDate)")
         
-        activityManager.queryActivityStarting(from: startDate, to: endDate, to: .main) { [weak self] activities, error in
-            guard let self = self else { return }
-            
+        activityManager.queryActivityStarting(from: startDate, to: endDate, to: .main) { activities, error in
             if let error = error {
                 print("❌ Error querying motion: \(error.localizedDescription)")
                 completion([])

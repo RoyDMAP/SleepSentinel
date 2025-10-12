@@ -122,10 +122,12 @@ struct OnboardingView: View {
             
             // Grant access button
             Button("Grant Access") {
-                Task {
-                    await vm.requestHKAuth()
+                vm.requestHKAuth()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     if vm.hkAuthorized {
-                        vm.completeOnboarding()
+                        withAnimation {
+                            vm.completeOnboarding()
+                        }
                     }
                 }
             }
