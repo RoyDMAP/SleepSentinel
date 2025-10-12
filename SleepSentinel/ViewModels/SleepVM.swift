@@ -18,6 +18,10 @@ final class SleepVM: ObservableObject {
     private var observerQuery: HKObserverQuery?
     private var anchor: HKQueryAnchor?
     
+    // Motion detection
+    let motionManager = MotionManager()
+    @Published var inferredCandidates: [InferredSleepCandidate] = []
+    
     init() {
         loadData()
         setupDayChangeObserver()
@@ -101,6 +105,9 @@ final class SleepVM: ObservableObject {
                     self.hkAuthorized = true
                     self.startObservers()
                     await self.runAnchoredFetch()
+                    
+                    // Start motion monitoring
+                    self.motionManager.requestAuthorization()
                 } else {
                     print("❌ HealthKit authorization failed: \(error?.localizedDescription ?? "Unknown error")")
                     self.errorMessage = error?.localizedDescription ?? "Authorization failed"
@@ -520,6 +527,87 @@ final class SleepVM: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "anchor")
         lastUpdate = nil
         print("🗑️ Cleared all cached data")
+    }
+    
+    // MARK: - Write Inferred Sleep to HealthKit
+    
+    /// Save an inferred sleep session to HealthKit
+    func saveInferredSleep(candidate: InferredSleepCandidate, duration: TimeInterval) {
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            print("❌ Sleep type unavailable")
+            return
+        }
+        
+        let endDate: Date
+        let startDate: Date
+        
+        if candidate.type == .sleepOnset {
+            startDate = candidate.timestamp
+            endDate = candidate.timestamp.addingTimeInterval(duration)
+        } else {
+            endDate = candidate.timestamp
+            startDate = candidate.timestamp.addingTimeInterval(-duration)
+        }
+        
+        // Create metadata to mark this as app-inferred
+        let metadata: [String: Any] = [
+            HKMetadataKeyWasUserEntered: true,
+            "AppInferred": true,
+            "InferenceSource": candidate.source.rawValue,
+            "Confidence": candidate.confidence
+        ]
+        
+        let sleepSample = HKCategorySample(
+            type: sleepType,
+            value: HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+            start: startDate,
+            end: endDate,
+            metadata: metadata
+        )
+        
+        healthStore.save(sleepSample) { success, error in
+            if success {
+                print("✅ Saved inferred sleep to HealthKit: \(startDate) to \(endDate)")
+                Task { @MainActor in
+                    await self.runAnchoredFetch()
+                }
+            } else {
+                print("❌ Failed to save inferred sleep: \(error?.localizedDescription ?? "Unknown")")
+            }
+        }
+    }
+    
+    /// Check for gaps in sleep data and suggest inferred candidates
+    func findSleepGaps() async {
+        print("🔍 Checking for sleep data gaps...")
+        
+        // Look at last 7 days
+        let endDate = Date()
+        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate)!
+        
+        // Get motion candidates for this period
+        await withCheckedContinuation { continuation in
+            motionManager.queryHistoricalMotion(from: startDate, to: endDate) { [weak self] candidates in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                
+                Task { @MainActor in
+                    // Filter candidates to only show for nights with missing data
+                    let filteredCandidates = candidates.filter { candidate in
+                        let nightDate = self.getNightAnchor(for: candidate.timestamp)
+                        let hasData = self.nights.contains { $0.date == nightDate }
+                        return !hasData
+                    }
+                    
+                    self.inferredCandidates = filteredCandidates
+                    print("💡 Found \(filteredCandidates.count) inferred sleep candidates")
+                    
+                    continuation.resume()
+                }
+            }
+        }
     }
     
     deinit {

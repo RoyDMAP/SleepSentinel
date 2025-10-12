@@ -240,6 +240,15 @@ struct SettingsView: View {
                 
                 // MARK: - Privacy & Info
                 Section {
+                    // NEW: Inferred Sleep link
+                    NavigationLink(destination: InferredSleepView()) {
+                        HStack {
+                            Image(systemName: "wand.and.stars")
+                                .foregroundStyle(.purple)
+                            Text("Inferred Sleep Data")
+                        }
+                    }
+                    
                     NavigationLink(destination: PrivacyPolicyView()) {
                         HStack {
                             Image(systemName: "lock.shield")
@@ -258,6 +267,19 @@ struct SettingsView: View {
                             .fontWeight(.medium)
                     }
                     
+                    // NEW: Show inferred candidates count
+                    if !vm.inferredCandidates.isEmpty {
+                        HStack {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.orange)
+                            Text("Pending Candidates")
+                            Spacer()
+                            Text("\(vm.inferredCandidates.count)")
+                                .foregroundStyle(.orange)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    
                     HStack {
                         Image(systemName: "info.circle")
                             .foregroundStyle(.blue)
@@ -269,7 +291,12 @@ struct SettingsView: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("SleepSentinel - Your personal sleep tracking companion")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SleepSentinel - Your personal sleep tracking companion")
+                        Text("Created by Roy Dimapilis")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .navigationTitle("Settings")
