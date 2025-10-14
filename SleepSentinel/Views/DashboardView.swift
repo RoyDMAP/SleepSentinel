@@ -363,10 +363,18 @@ struct DashboardView: View {
     // Calculate average sleep for last 7 nights
     private func averageSleep() -> String {
         let recent = Array(vm.nights.prefix(7))
+        guard !recent.isEmpty else { return "n/a" }
+        
         let sleepTimes = recent.compactMap { $0.asleep }
         guard !sleepTimes.isEmpty else { return "n/a" }
+        
         let avg = sleepTimes.reduce(0, +) / Double(sleepTimes.count)
-        return String(format: "%.1fh", avg / 3600.0)
+        let avgHours = avg / 3600.0
+        
+        //Guard against weird values
+        guard avgHours.isFinite && avgHours >= 0 && avgHours <= 24 else { return "n/a" }
+        
+        return String(format: "%.1f", avgHours)
     }
 }
 // Preview for Xcode

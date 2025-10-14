@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var exportedCSV = ""
     @State private var targetBedtimeDate = Date()
     @State private var targetWakeDate = Date()
+    @State private var isRefreshing = false
+    @State private var isResyncing = false
     
     var body: some View {
         NavigationStack {
@@ -124,42 +126,60 @@ struct SettingsView: View {
                 Section {
                     // Regular refresh
                     Button(action: {
+                        print("🔵 Refresh button tapped")
+                        isRefreshing = true
                         Task {
                             await vm.runAnchoredFetch()
+                            isRefreshing = false
                         }
                     }) {
                         HStack {
-                            Image(systemName: vm.isLoading ? "arrow.clockwise.circle.fill" : "arrow.clockwise")
+                            Image(systemName: "arrow.clockwise")
                                 .foregroundStyle(.blue)
+                                .symbolEffect(.rotate, isActive: isRefreshing || vm.isLoading)
                             Text("Refresh Sleep Data")
                             Spacer()
-                            if vm.isLoading {
+                            if isRefreshing || vm.isLoading {
                                 ProgressView()
                             }
                         }
                     }
-                    .disabled(vm.isLoading)
+                    .disabled(isRefreshing || vm.isLoading)
                     
                     // Force full resync
                     Button(action: {
+                        print("🟠 Force Resync button tapped")
+                        isResyncing = true
                         vm.forceFullResync()
+                        // Wait a bit for the resync to complete
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                            isResyncing = false
+                        }
                     }) {
                         HStack {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .foregroundStyle(.orange)
+                                .symbolEffect(.rotate, isActive: isResyncing || vm.isLoading)
                             Text("Force Full Resync")
+                            Spacer()
+                            if isResyncing || vm.isLoading {
+                                ProgressView()
+                            }
                         }
                     }
-                    .disabled(vm.isLoading)
+                    .disabled(isResyncing || vm.isLoading)
                     
-                    // Debug button
-                    Button(action: {
-                        vm.debugHealthKitData()
-                    }) {
+                    // Debug button - now opens a dedicated view
+                    NavigationLink(destination: DebugConsoleView()) {
                         HStack {
                             Image(systemName: "ladybug")
                                 .foregroundStyle(.purple)
-                            Text("Debug HealthKit Data")
+                            Text("Debug Console")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     
@@ -191,6 +211,7 @@ struct SettingsView: View {
                     
                     if !vm.hkAuthorized {
                         Button(action: {
+                            print("❤️ Connect to HealthKit tapped")
                             vm.requestHKAuth()
                         }) {
                             HStack {
@@ -214,6 +235,7 @@ struct SettingsView: View {
                 // MARK: - Export & Delete
                 Section {
                     Button(action: {
+                        print("📤 Export button tapped")
                         exportedCSV = vm.exportCSV()
                         showingExport = true
                     }) {
@@ -225,12 +247,51 @@ struct SettingsView: View {
                     }
                     
                     Button(role: .destructive, action: {
+                        print("🗑️ Clear data button tapped")
                         showingClearAlert = true
                     }) {
                         HStack {
                             Image(systemName: "trash")
                             Text("Clear All Data")
                         }
+                    }
+                    
+                    // TEMPORARY: Nuclear clear - remove after using once
+                    Button(action: {
+                        print("💣 NUCLEAR CLEAR - Wiping everything")
+                        
+                        vm.clearAllData()
+                        
+                        // Clear UserDefaults
+                        UserDefaults.standard.removeObject(forKey: "nights")
+                        UserDefaults.standard.removeObject(forKey: "anchor")
+                        UserDefaults.standard.removeObject(forKey: "settings")
+                        UserDefaults.standard.synchronize()
+                        
+                        print("✅ All data wiped - App will restart")
+                        
+                        // Force restart
+                        Task {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            exit(0)
+                        }
+                    }) {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.red)
+                                Text("NUCLEAR CLEAR & RESTART")
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(.red)
+                            }
+                            Text("Use this if Clear All Data doesn't work")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.red.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                 } header: {
                     Text("Data Management")
@@ -240,7 +301,7 @@ struct SettingsView: View {
                 
                 // MARK: - Privacy & Info
                 Section {
-                    // NEW: Inferred Sleep link
+                    // Inferred Sleep link
                     NavigationLink(destination: InferredSleepView()) {
                         HStack {
                             Image(systemName: "wand.and.stars")
@@ -267,7 +328,7 @@ struct SettingsView: View {
                             .fontWeight(.medium)
                     }
                     
-                    // NEW: Show inferred candidates count
+                    // Show inferred candidates count
                     if !vm.inferredCandidates.isEmpty {
                         HStack {
                             Image(systemName: "sparkles")
@@ -309,9 +370,13 @@ struct SettingsView: View {
             .alert("Clear All Data?", isPresented: $showingClearAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Clear", role: .destructive) {
+                    print("🗑️ User confirmed clear")
                     vm.clearAllData()
-                    Task {
-                        await vm.runAnchoredFetch()
+                    // Force a small delay to ensure save completes
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        Task {
+                            await vm.runAnchoredFetch()
+                        }
                     }
                 }
             } message: {

@@ -48,6 +48,9 @@ final class SleepVM: ObservableObject {
            let decoded = try? JSONDecoder().decode([SleepNight].self, from: data) {
             nights = decoded.sorted { $0.date > $1.date }
             print("📱 Loaded \(nights.count) nights from cache")
+            if let newest = nights.first?.date {
+                print("📅 Most recent night in cache: \(newest)")
+            }
         }
         
         // Load HealthKit anchor
@@ -68,6 +71,9 @@ final class SleepVM: ObservableObject {
         if let encoded = try? JSONEncoder().encode(nights) {
             UserDefaults.standard.set(encoded, forKey: "nights")
             print("💾 Saved \(nights.count) nights to cache")
+            if let newest = nights.first?.date {
+                print("📅 Most recent night saved: \(newest)")
+            }
         }
     }
     
@@ -124,6 +130,7 @@ final class SleepVM: ObservableObject {
         // Watch for new sleep data
         observerQuery = HKObserverQuery(sampleType: sleepType, predicate: nil) { [weak self] _, _, _ in
             Task { @MainActor in
+                print("🔔 HealthKit detected new sleep data")
                 await self?.runAnchoredFetch()
             }
         }
@@ -153,6 +160,7 @@ final class SleepVM: ObservableObject {
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
         
         print("🔄 Fetching sleep data from \(startDate) to \(endDate)")
+        print("📍 Current date: \(Date())")
         
         await withCheckedContinuation { continuation in
             let query = HKAnchoredObjectQuery(
@@ -171,7 +179,18 @@ final class SleepVM: ObservableObject {
                         print("❌ Error fetching sleep data: \(error.localizedDescription)")
                         self.errorMessage = error.localizedDescription
                     } else if let samples = samples as? [HKCategorySample] {
-                        print("✅ Fetched \(samples.count) sleep samples")
+                        print("✅ Fetched \(samples.count) sleep samples from HealthKit")
+                        
+                        if samples.isEmpty {
+                            print("⚠️ No new sleep samples found. Last night may not have been tracked.")
+                            print("💡 Check if you have an Apple Watch or sleep tracking app recording data.")
+                        } else {
+                            // Log the most recent sample
+                            if let mostRecent = samples.max(by: { $0.endDate < $1.endDate }) {
+                                print("📅 Most recent sample ends at: \(mostRecent.endDate)")
+                            }
+                        }
+                        
                         self.processSamples(samples)
                     }
                     
@@ -201,27 +220,178 @@ final class SleepVM: ObservableObject {
         }
     }
     
-    // Debug: Check what's in HealthKit
+    // Debug: Check what's in HealthKit with maximum detail
     func debugHealthKitData() {
+        print("\n🔍 ====== HEALTHKIT DEBUG START ======")
+        print("📍 Current date/time: \(Date())")
+        print("📱 App has \(nights.count) nights cached")
+        
         let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        
+        // Query ALL time (no date restriction) to catch everything
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
         
-        let query = HKSampleQuery(sampleType: sleepType, predicate: nil, limit: 20, sortDescriptors: [sortDescriptor]) { query, results, error in
-            if let samples = results as? [HKCategorySample] {
-                Task { @MainActor in
-                    print("🔍 DEBUG: Found \(samples.count) most recent sleep samples in HealthKit:")
-                    for (index, sample) in samples.enumerated() {
-                        let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
-                        let type = self.sleepTypeString(value)
-                        print("  \(index + 1). [\(type)] Start: \(sample.startDate), End: \(sample.endDate)")
+        print("📅 Querying ALL sleep data (no date limit)")
+        
+        let query = HKSampleQuery(sampleType: sleepType, predicate: nil, limit: HKObjectQueryNoLimit, sortDescriptors: [sortDescriptor]) { query, results, error in
+            Task { @MainActor in
+                if let error = error {
+                    print("❌ DEBUG ERROR: \(error.localizedDescription)")
+                } else if let samples = results as? [HKCategorySample] {
+                    print("\n📊 Found \(samples.count) TOTAL sleep samples in HealthKit (ALL TIME)")
+                    
+                    if samples.isEmpty {
+                        print("\n⚠️ ABSOLUTELY NO SLEEP DATA IN HEALTHKIT!")
+                        print("💡 This means permission issue or data format problem")
+                    } else {
+                        print("\n✅ Data exists! Showing ALL samples...")
+                        
+                        // Show ALL samples with complete details
+                        for (index, sample) in samples.enumerated() {
+                            let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
+                            let type = self.sleepTypeString(value)
+                            let source = sample.sourceRevision.source.name
+                            let bundleId = sample.sourceRevision.source.bundleIdentifier
+                            let userEntered = sample.metadata?[HKMetadataKeyWasUserEntered] as? Bool ?? false
+                            let duration = sample.endDate.timeIntervalSince(sample.startDate) / 3600.0
+                            
+                            print("\n   Sample \(index + 1):")
+                            print("      Type: [\(type)]")
+                            print("      Duration: \(String(format: "%.1fh", duration))")
+                            print("      Start: \(sample.startDate)")
+                            print("      End: \(sample.endDate)")
+                            print("      Source: \(source)")
+                            print("      Bundle ID: \(bundleId)")
+                            print("      User entered: \(userEntered)")
+                            print("      Night anchor: \(self.getNightAnchor(for: sample.startDate))")
+                            
+                            // Check if this sample should be in our date range
+                            let endDate = Date()
+                            let startDate = Calendar.current.date(byAdding: .day, value: -180, to: endDate)!
+                            if sample.startDate >= startDate && sample.startDate <= endDate {
+                                print("      ✅ WITHIN 180-day query range")
+                            } else {
+                                print("      ❌ OUTSIDE 180-day query range")
+                            }
+                        }
                     }
                 }
-            } else {
-                print("❌ DEBUG: No samples found or error: \(error?.localizedDescription ?? "unknown")")
+                print("\n🔍 ====== HEALTHKIT DEBUG END ======\n")
             }
         }
         
         healthStore.execute(query)
+    }
+    
+    // Debug with callback for in-app display
+    func debugHealthKitWithCallback(completion: @escaping (String) -> Void) {
+        let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        
+        // Query last 7 days of data
+        let endDate = Date()
+        let startDate = Calendar.current.date(byAdding: .day, value: -7, to: endDate)!
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate)
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        
+        let query = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: 50, sortDescriptors: [sortDescriptor]) { query, results, error in
+            Task { @MainActor in
+                var output = ""
+                
+                if let error = error {
+                    output = "❌ DEBUG ERROR: \(error.localizedDescription)"
+                } else if let samples = results as? [HKCategorySample] {
+                    output += "\n📊 Found \(samples.count) sleep samples in HealthKit (last 7 days):"
+                    
+                    if samples.isEmpty {
+                        output += "\n\n⚠️ NO SLEEP DATA IN HEALTHKIT!"
+                        output += "\n💡 This means:"
+                        output += "\n   - No Apple Watch is tracking sleep"
+                        output += "\n   - No sleep tracking apps are writing data"
+                        output += "\n   - Your phone alone cannot track sleep automatically"
+                        output += "\n\n🔧 Solutions:"
+                        output += "\n   1. Wear your Apple Watch to bed tonight"
+                        output += "\n   2. Install a sleep tracking app"
+                        output += "\n   3. Manually add sleep in Health app"
+                    } else {
+                        // Group by date
+                        var dateGroups: [String: [HKCategorySample]] = [:]
+                        let dateFormatter = DateFormatter()
+                        dateFormatter.dateStyle = .medium
+                        
+                        for sample in samples {
+                            let nightDate = self.getNightAnchor(for: sample.startDate)
+                            let dateKey = dateFormatter.string(from: nightDate)
+                            dateGroups[dateKey, default: []].append(sample)
+                        }
+                        
+                        output += "\n\n📅 Sleep data by night:"
+                        for (date, samples) in dateGroups.sorted(by: { $0.key > $1.key }) {
+                            output += "\n\n   \(date) - \(samples.count) samples:"
+                            for (index, sample) in samples.prefix(5).enumerated() {
+                                let value = HKCategoryValueSleepAnalysis(rawValue: sample.value)
+                                let type = self.sleepTypeString(value)
+                                let duration = sample.endDate.timeIntervalSince(sample.startDate) / 3600.0
+                                output += "\n      \(index + 1). [\(type)] \(String(format: "%.1fh", duration))"
+                                output += "\n         \(sample.startDate) → \(sample.endDate)"
+                            }
+                        }
+                        
+                        if let mostRecent = samples.first {
+                            output += "\n\n📅 MOST RECENT SAMPLE:"
+                            output += "\n   Type: \(self.sleepTypeString(HKCategoryValueSleepAnalysis(rawValue: mostRecent.value)))"
+                            output += "\n   Start: \(mostRecent.startDate)"
+                            output += "\n   End: \(mostRecent.endDate)"
+                            output += "\n   Night: \(self.getNightAnchor(for: mostRecent.startDate))"
+                        }
+                    }
+                }
+                
+                completion(output)
+            }
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    // Debug: Check midpoints of cached nights
+    func debugMidpoints() {
+        print("\n🔍 ====== MIDPOINTS DEBUG ======")
+        print("📊 Checking \(nights.count) nights:")
+        
+        let calendar = Calendar.current
+        let recentNights = Array(nights.prefix(7))
+        
+        for (index, night) in recentNights.enumerated() {
+            print("\n   Night \(index + 1): \(night.date)")
+            print("      Bedtime: \(night.bedtime?.description ?? "nil")")
+            print("      Wake: \(night.wake?.description ?? "nil")")
+            print("      Midpoint: \(night.midpoint?.description ?? "nil")")
+            
+            if let midpoint = night.midpoint {
+                let hour = calendar.component(.hour, from: midpoint)
+                let minute = calendar.component(.minute, from: midpoint)
+                print("      Midpoint time: \(hour):\(String(format: "%02d", minute))")
+            }
+            
+            if let asleep = night.asleep {
+                print("      Sleep duration: \(String(format: "%.1fh", asleep / 3600.0))")
+            }
+        }
+        
+        // Calculate what's breaking
+        let midpoints = recentNights.compactMap { $0.midpoint?.timeIntervalSince1970 }
+        if midpoints.count >= 3 {
+            let mean = midpoints.reduce(0, +) / Double(midpoints.count)
+            let variance = midpoints.map { pow($0 - mean, 2) }.reduce(0, +) / Double(midpoints.count)
+            let stdDev = sqrt(variance) / 3600.0
+            
+            print("\n📊 Midpoint stats:")
+            print("   Count: \(midpoints.count)")
+            print("   Std Dev: \(String(format: "%.2f hours", stdDev))")
+            print("   (Should be 0.5-2h for normal sleep)")
+        }
+        
+        print("\n🔍 ====== MIDPOINTS DEBUG END ======\n")
     }
     
     private func sleepTypeString(_ value: HKCategoryValueSleepAnalysis?) -> String {
@@ -251,6 +421,11 @@ final class SleepVM: ObservableObject {
         }
         
         print("📅 Found \(nightsDict.keys.count) unique nights")
+        
+        // Log the nights being processed
+        for (nightDate, samples) in nightsDict.sorted(by: { $0.key > $1.key }) {
+            print("   Night: \(nightDate) - \(samples.count) samples")
+        }
         
         var newNights: [SleepNight] = []
         
@@ -327,7 +502,7 @@ final class SleepVM: ObservableObject {
     }
     
     // Figure out which night a time belongs to
-    private func getNightAnchor(for date: Date) -> Date {
+    func getNightAnchor(for date: Date) -> Date {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: date)
         
@@ -347,6 +522,7 @@ final class SleepVM: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                print("📅 Day changed - refreshing data")
                 await self?.runAnchoredFetch()
             }
         }
@@ -357,17 +533,29 @@ final class SleepVM: ObservableObject {
     // How consistent is sleep timing? (lower is better)
     func getMidpointStdDev() -> Double? {
         let recentNights = Array(nights.prefix(7))
+        guard recentNights.count >= 3 else { return nil }
+        
         let midpoints = recentNights.compactMap { $0.midpoint?.timeIntervalSince1970 }
         guard midpoints.count >= 3 else { return nil }
         
         let mean = midpoints.reduce(0, +) / Double(midpoints.count)
         let variance = midpoints.map { pow($0 - mean, 2) }.reduce(0, +) / Double(midpoints.count)
-        return sqrt(variance) / 3600.0
+        let stdDev = sqrt(variance) / 3600.0
+        
+        // Safety check: stdDev should be between 0 and 12 hours
+        guard stdDev.isFinite && stdDev >= 0 && stdDev <= 12 else {
+            print("⚠️ Invalid stdDev: \(stdDev) - returning nil")
+            return nil
+        }
+        
+        return stdDev
     }
     
     // Difference between weekday and weekend sleep
     func getSocialJetlag() -> Double? {
         let twoWeeks = Array(nights.prefix(14))
+        guard twoWeeks.count >= 4 else { return nil }
+        
         var weekdayMidpoints: [TimeInterval] = []
         var weekendMidpoints: [TimeInterval] = []
         
@@ -386,8 +574,15 @@ final class SleepVM: ObservableObject {
         
         let weekdayAvg = weekdayMidpoints.reduce(0, +) / Double(weekdayMidpoints.count)
         let weekendAvg = weekendMidpoints.reduce(0, +) / Double(weekendMidpoints.count)
+        let jetlag = abs(weekendAvg - weekdayAvg) / 3600.0
         
-        return abs(weekendAvg - weekdayAvg) / 3600.0
+        // Safety check: jetlag should be between 0 and 12 hours
+        guard jetlag.isFinite && jetlag >= 0 && jetlag <= 12 else {
+            print("⚠️ Invalid jetlag: \(jetlag) - returning nil")
+            return nil
+        }
+        
+        return jetlag
     }
     
     // Percent of nights within target schedule
@@ -403,7 +598,15 @@ final class SleepVM: ObservableObject {
             return abs(midpoint.timeIntervalSince1970 - targetMidpoint) <= tolerance
         }.count
         
-        return (Double(inWindow) / Double(recentNights.count)) * 100
+        let regularity = (Double(inWindow) / Double(recentNights.count)) * 100
+        
+        // Safety check: regularity should be between 0 and 100%
+        guard regularity.isFinite && regularity >= 0 && regularity <= 100 else {
+            print("⚠️ Invalid regularity: \(regularity) - returning nil")
+            return nil
+        }
+        
+        return regularity
     }
     
     private func getTargetMidpoint() -> TimeInterval {
@@ -421,7 +624,7 @@ final class SleepVM: ObservableObject {
             return 0
         }
         
-        var bedtimeDate = calendar.date(bySettingHour: bedHour, minute: bedMinute, second: 0, of: todayStart)!
+        let bedtimeDate = calendar.date(bySettingHour: bedHour, minute: bedMinute, second: 0, of: todayStart)!
         var wakeDate = calendar.date(bySettingHour: wakeHour, minute: wakeMinute, second: 0, of: todayStart)!
         
         // If wake time is earlier than bedtime (crosses midnight), add a day to wake time
