@@ -12,6 +12,9 @@ final class SleepVM: ObservableObject {
     @Published var lastUpdate: Date?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var sleepConsistency: Double? = nil
+    @Published var socialJetlag: Double? = nil
+
     
     // Private stuff for HealthKit
     private let healthStore = HKHealthStore()
@@ -25,6 +28,9 @@ final class SleepVM: ObservableObject {
     init() {
         loadData()
         setupDayChangeObserver()
+        
+        // Calculate metrics from cached data
+        updateCalculatedMetrics()
         
         // Fetch fresh data on app launch if authorized
         Task {
@@ -499,6 +505,9 @@ final class SleepVM: ObservableObject {
         }
         
         saveNights()
+        
+        // Update calculated metrics after processing new data
+        updateCalculatedMetrics()
     }
     
     // Figure out which night a time belongs to
@@ -530,30 +539,39 @@ final class SleepVM: ObservableObject {
     
     // MARK: - Calculate Sleep Stats
     
+    // Update all calculated metrics
+    private func updateCalculatedMetrics() {
+        sleepConsistency = getMidpointStdDev()
+        socialJetlag = getSocialJetlag()
+        print("📊 Updated metrics - Consistency: \(sleepConsistency?.description ?? "nil"), Social Jetlag: \(socialJetlag?.description ?? "nil")")
+    }
+    
     // How consistent is sleep timing? (lower is better)
     func getMidpointStdDev() -> Double? {
-        let recentNights = Array(nights.prefix(7))
+        let recentNights = Array(nights.sorted(by: { $0.date > $1.date}).prefix(7))
         guard recentNights.count >= 3 else { return nil }
+        print("recentNights: \(recentNights.count)")
         
         let midpoints = recentNights.compactMap { $0.midpoint?.timeIntervalSince1970 }
         guard midpoints.count >= 3 else { return nil }
+        print("midpoints: \(midpoints.count)")
         
         let mean = midpoints.reduce(0, +) / Double(midpoints.count)
         let variance = midpoints.map { pow($0 - mean, 2) }.reduce(0, +) / Double(midpoints.count)
         let stdDev = sqrt(variance) / 3600.0
         
         // Safety check: stdDev should be between 0 and 12 hours
-        guard stdDev.isFinite && stdDev >= 0 && stdDev <= 12 else {
-            print("⚠️ Invalid stdDev: \(stdDev) - returning nil")
-            return nil
-        }
+//        guard stdDev.isFinite && stdDev >= 0 && stdDev <= 12 else {
+//            print("⚠️ Invalid stdDev: \(stdDev) - returning nil")
+//            return nil
+//        }
         
         return stdDev
     }
     
     // Difference between weekday and weekend sleep
     func getSocialJetlag() -> Double? {
-        let twoWeeks = Array(nights.prefix(14))
+        let twoWeeks = Array(nights.sorted(by: { $0.date > $1.date}).prefix(14))
         guard twoWeeks.count >= 4 else { return nil }
         
         var weekdayMidpoints: [TimeInterval] = []
@@ -577,10 +595,10 @@ final class SleepVM: ObservableObject {
         let jetlag = abs(weekendAvg - weekdayAvg) / 3600.0
         
         // Safety check: jetlag should be between 0 and 12 hours
-        guard jetlag.isFinite && jetlag >= 0 && jetlag <= 12 else {
-            print("⚠️ Invalid jetlag: \(jetlag) - returning nil")
-            return nil
-        }
+//        guard jetlag.isFinite && jetlag >= 0 && jetlag <= 12 else {
+//            print("⚠️ Invalid jetlag: \(jetlag) - returning nil")
+//            return nil
+//        }
         
         return jetlag
     }
@@ -748,6 +766,8 @@ final class SleepVM: ObservableObject {
         anchor = nil
         UserDefaults.standard.removeObject(forKey: "anchor")
         lastUpdate = nil
+        sleepConsistency = nil
+        socialJetlag = nil
         print("🗑️ Cleared all cached data")
     }
     

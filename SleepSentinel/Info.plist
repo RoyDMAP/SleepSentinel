@@ -2,28 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSMotionUsageDescription</key>
-	<string>SleepSentinel uses motion data to detect when you fall asleep and wake up, helping to fill gaps in your sleep tracking.&lt;/string&gt;</string>
-	<key>CFBundleDisplayName</key>
-	<string>SleepSentinel</string>
-	<key>NSHealthShareUsageDescription</key>
-	<string>SleepSentinel needs access to your sleep data to provide insights and track your sleep patterns.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>SleepSentinel needs permission to save sleep data to HealthKit so it can record your sleep sessions and provide personalized insights.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
 </dict>
 </plist>
