@@ -539,70 +539,87 @@ final class SleepVM: ObservableObject {
     
     // MARK: - Calculate Sleep Stats
     
-    // Update all calculated metrics
     private func updateCalculatedMetrics() {
-        sleepConsistency = getMidpointStdDev()
-        socialJetlag = getSocialJetlag()
-        print("📊 Updated metrics - Consistency: \(sleepConsistency?.description ?? "nil"), Social Jetlag: \(socialJetlag?.description ?? "nil")")
+        // Calculate sleep consistency
+        if let consistency = getMidpointStdDev() {
+            sleepConsistency = min(max(consistency, 1), 12)
+        } else {
+            sleepConsistency = nil
+        }
+        
+        // Calculate social jetlag
+        if let jetlag = getSocialJetlag() {
+            socialJetlag = min(max(jetlag, 1), 12)
+        } else {
+            socialJetlag = nil
+        }
+        
+        print("📊 Updated metrics:")
+        if let consistency = sleepConsistency {
+            print("   🔹 Consistency: \(String(format: "%.2f", consistency)) hours")
+        } else {
+            print("   🔹 Consistency: nil")
+        }
+        
+        if let jetlag = socialJetlag {
+            print("   🔹 Social Jetlag: \(String(format: "%.2f", jetlag)) hours")
+        } else {
+            print("   🔹 Social Jetlag: nil")
+        }
     }
+
     
     // How consistent is sleep timing? (lower is better)
     func getMidpointStdDev() -> Double? {
-        let recentNights = Array(nights.sorted(by: { $0.date > $1.date}).prefix(7))
+        let recentNights = Array(nights.sorted(by: { $0.date > $1.date }).prefix(7))
         guard recentNights.count >= 3 else { return nil }
-        print("recentNights: \(recentNights.count)")
-        
-        let midpoints = recentNights.compactMap { $0.midpoint?.timeIntervalSince1970 }
-        guard midpoints.count >= 3 else { return nil }
-        print("midpoints: \(midpoints.count)")
-        
-        let mean = midpoints.reduce(0, +) / Double(midpoints.count)
-        let variance = midpoints.map { pow($0 - mean, 2) }.reduce(0, +) / Double(midpoints.count)
-        let stdDev = sqrt(variance) / 3600.0
-        
-        // Safety check: stdDev should be between 0 and 12 hours
-//        guard stdDev.isFinite && stdDev >= 0 && stdDev <= 12 else {
-//            print("⚠️ Invalid stdDev: \(stdDev) - returning nil")
-//            return nil
-//        }
-        
-        return stdDev
+
+        // Midpoints in hours (0..24)
+        let midpointsHours = recentNights.compactMap { night -> Double? in
+            guard let midpoint = night.midpoint else { return nil }
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: midpoint)
+            return Double(comps.hour ?? 0) + Double(comps.minute ?? 0) / 60.0
+        }
+
+        guard !midpointsHours.isEmpty else { return nil }
+
+        let mean = midpointsHours.reduce(0, +) / Double(midpointsHours.count)
+        let variance = midpointsHours.map { pow($0 - mean, 2) }.reduce(0, +) / Double(midpointsHours.count)
+        let stdDevHours = sqrt(variance)
+
+        return min(max(stdDevHours, 0), 12)
     }
-    
-    // Difference between weekday and weekend sleep
+        
     func getSocialJetlag() -> Double? {
-        let twoWeeks = Array(nights.sorted(by: { $0.date > $1.date}).prefix(14))
-        guard twoWeeks.count >= 4 else { return nil }
-        
-        var weekdayMidpoints: [TimeInterval] = []
-        var weekendMidpoints: [TimeInterval] = []
-        
-        for night in twoWeeks {
+        // Take the last 2 weeks
+        let recentNights = Array(nights.sorted { $0.date > $1.date }.prefix(14))
+        guard recentNights.count >= 4 else { return nil }
+
+        var weekdayHours: [Double] = []
+        var weekendHours: [Double] = []
+
+        for night in recentNights {
             guard let midpoint = night.midpoint else { continue }
-            let weekday = Calendar.current.component(.weekday, from: night.date)
-            
-            if weekday == 1 || weekday == 7 {  // Saturday or Sunday
-                weekendMidpoints.append(midpoint.timeIntervalSince1970)
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: midpoint)
+            let hour = Double(comps.hour ?? 0) + Double(comps.minute ?? 0) / 60.0
+
+            let weekday = Calendar.current.component(.weekday, from: midpoint)
+            if weekday == 1 || weekday == 7 { // Sunday=1, Saturday=7
+                weekendHours.append(hour)
             } else {
-                weekdayMidpoints.append(midpoint.timeIntervalSince1970)
+                weekdayHours.append(hour)
             }
         }
-        
-        guard !weekdayMidpoints.isEmpty && !weekendMidpoints.isEmpty else { return nil }
-        
-        let weekdayAvg = weekdayMidpoints.reduce(0, +) / Double(weekdayMidpoints.count)
-        let weekendAvg = weekendMidpoints.reduce(0, +) / Double(weekendMidpoints.count)
-        let jetlag = abs(weekendAvg - weekdayAvg) / 3600.0
-        
-        // Safety check: jetlag should be between 0 and 12 hours
-//        guard jetlag.isFinite && jetlag >= 0 && jetlag <= 12 else {
-//            print("⚠️ Invalid jetlag: \(jetlag) - returning nil")
-//            return nil
-//        }
-        
-        return jetlag
+
+        guard !weekdayHours.isEmpty && !weekendHours.isEmpty else { return nil }
+
+        let weekdayAvg = weekdayHours.reduce(0, +) / Double(weekdayHours.count)
+        let weekendAvg = weekendHours.reduce(0, +) / Double(weekendHours.count)
+
+        let jetlagHours = abs(weekendAvg - weekdayAvg)
+        return min(max(jetlagHours, 0), 12) // Ensure within 0-12 hours
     }
-    
+
     // Percent of nights within target schedule
     func getRegularityIndex() -> Double? {
         let recentNights = Array(nights.prefix(30))
